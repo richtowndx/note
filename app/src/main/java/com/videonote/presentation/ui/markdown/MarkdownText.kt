@@ -258,11 +258,10 @@ private fun MarkdownWithWebView(
     // WebView 引用，用于在 LaunchedEffect 中访问
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
 
-    // 监听 highlightId 变化并执行高亮（仅更新 CSS 高亮，不自动滚动）
+    // 监听 highlightId 变化并执行高亮和自动滚动
     LaunchedEffect(highlightId) {
         highlightId?.let { id ->
             webViewRef?.postDelayed({
-                // 高亮目标元素，由页面内 JS 的 lastUserTouchTime 控制是否自动滚动
                 val js = """
                     (function() {
                         document.querySelectorAll('.md-highlight').forEach(el => {
@@ -271,7 +270,7 @@ private fun MarkdownWithWebView(
                         var target = document.getElementById('$id');
                         if (target) {
                             target.classList.add('md-highlight');
-                            // 仅在用户未触摸时自动滚动
+                            // 仅在用户未触摸时自动滚动到屏幕中间
                             if (Date.now() - lastUserTouchTime > 2000) {
                                 target.scrollIntoView({ behavior: 'smooth', block: 'center' });
                             }
@@ -292,11 +291,15 @@ private fun MarkdownWithWebView(
                 settings.loadWithOverviewMode = true
                 settings.useWideViewPort = true
                 settings.textZoom = 100
+                settings.cacheMode = WebSettings.LOAD_DEFAULT
 
                 // 启用缩放控件
                 settings.setSupportZoom(true)
                 settings.builtInZoomControls = true
                 settings.displayZoomControls = false
+
+                // 硬件加速层，提升滚动流畅度
+                setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null)
 
                 webViewClient = WebViewClient()
 
@@ -456,6 +459,9 @@ private fun markdownToHtmlWithIds(
 ): Pair<String, List<String>> {
     val html = StringBuilder()
 
+    // 检测是否包含 LaTeX 公式，仅在需要时加载 MathJax
+    val hasMath = LatexMathRenderer.containsMathFormula(markdown)
+
     // HTML 头部
     html.append("""
         <!DOCTYPE html>
@@ -463,6 +469,10 @@ private fun markdownToHtmlWithIds(
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=3.0, user-scalable=yes">
+    """.trimIndent())
+
+    if (hasMath) {
+        html.append("""
             <!-- MathJax for LaTeX rendering -->
             <script>
             // 配置 MathJax
@@ -483,8 +493,12 @@ private fun markdownToHtmlWithIds(
                 }
             };
             </script>
-            <!-- 同步加载 MathJax -->
-            <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" id="MathJax-script"></script>
+            <!-- 异步加载 MathJax，避免阻塞渲染 -->
+            <script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js" id="MathJax-script"></script>
+        """.trimIndent())
+    }
+
+    html.append("""
             <style>
                 body {
                     margin: 0;
@@ -567,7 +581,6 @@ private fun markdownToHtmlWithIds(
                     background-color: rgba(76, 175, 80, 0.3);
                     border-left: 4px solid #4CAF50;
                     padding-left: 8px;
-                    transition: background-color 0.3s ease;
                 }
                 /* LaTeX 公式样式 */
                 .latex-formula-inline {
